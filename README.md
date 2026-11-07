@@ -69,6 +69,8 @@ pip install 'nxremote-client[sdl]'
 nxremote-client <host>:8000 --token "$(nxremote token)"
 ```
 
+On **Android**, [`android/`](android/) is a native app that forwards a controller plugged into the phone and — unlike the browser — **keeps forwarding in the background** (switch apps / lock the screen) via a foreground service. See [android/README.md](android/README.md).
+
 ## API
 
 Interactive docs: `http://<pi>:8000/docs`. Built-in web UI (on-screen controller, **forwards a physical gamepad and plays the Switch's rumble back on it**): `http://<pi>:8000/`.
