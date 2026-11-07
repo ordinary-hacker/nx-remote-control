@@ -39,6 +39,7 @@
   <button id="connect">Connect</button>
   <span class="pill" id="ws">socket: off</span>
   <span class="pill" id="state">controller: ?</span>
+  <label class="pill"><input type="checkbox" id="awake" checked style="vertical-align:-2px"> keep awake</label>
   <button id="start">Start pairing</button>
   <button id="release">Release all</button>
 </header>
@@ -71,6 +72,7 @@
   <div class="panel">
     <div>Physical gamepads connected to <em>this browser</em> are forwarded automatically (button positions follow the Switch layout) and receive the Switch's rumble.</div>
     <label><input type="checkbox" id="fwd" checked> forward gamepad</label>
+    <div style="color:var(--muted);font-size:.9em">"keep awake" (in the header) stops the screen from sleeping while this page is in front. Phone browsers can't keep playing once you switch to another app or lock the phone — the connection drops, but it reconnects automatically the moment you return to this page.</div>
   </div>
   <pre id="log"></pre>
 </main>
@@ -82,6 +84,9 @@ const log = (m) => { logEl.textContent = (m + "\n" + logEl.textContent).slice(0,
 $("#token").value = localStorage.getItem("nxremote-token") || new URLSearchParams(location.search).get("token") || "";
 
 let ws = null;
+let wantConnected = false;        // whether we should be connected right now
+let reconnectTimer = 0;
+let reconnectDelay = 500;         // ms, backs off to 5s
 const held = new Set();          // buttons held via the UI
 let pad = { buttons: new Set(), ls: [0, 0], rs: [0, 0] };  // from a physical gamepad
 const sticks = { ls: [0, 0], rs: [0, 0] };                 // from on-screen sticks
@@ -92,13 +97,61 @@ function api(path, opts = {}) {
     .then(async (r) => { if (!r.ok) throw new Error(r.status + " " + await r.text()); return r.json(); });
 }
 
+// -- keep the screen awake (Screen Wake Lock API) ------------------------------
+let wakeLock = null;
+async function acquireWakeLock() {
+  if (!$("#awake").checked || !("wakeLock" in navigator)) { updateAwakePill(); return; }
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => { wakeLock = null; updateAwakePill(); });
+  } catch (e) { log("wake lock: " + e.message); }
+  updateAwakePill();
+}
+function releaseWakeLock() {
+  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  updateAwakePill();
+}
+function updateAwakePill() {
+  const el = $("#awake").parentElement;
+  const on = !!wakeLock;
+  el.className = "pill" + (on ? " ok" : "");
+  el.title = ("wakeLock" in navigator)
+    ? (on ? "screen will stay on" : "screen may sleep")
+    : "this browser has no Wake Lock API; keep the tab in the foreground";
+}
+$("#awake").addEventListener("change", () => ($("#awake").checked ? acquireWakeLock() : releaseWakeLock()));
+
+function scheduleReconnect() {
+  if (!wantConnected || reconnectTimer) return;
+  reconnectTimer = setTimeout(() => { reconnectTimer = 0; openSocket(); }, reconnectDelay);
+  reconnectDelay = Math.min(reconnectDelay * 2, 5000);
+}
+
 function connect() {
-  if (ws) ws.close();
   localStorage.setItem("nxremote-token", $("#token").value);
+  wantConnected = true;
+  acquireWakeLock();
+  openSocket();
+}
+function disconnect() {
+  wantConnected = false;
+  clearTimeout(reconnectTimer); reconnectTimer = 0;
+  if (ws) { ws.close(); ws = null; }
+  releaseWakeLock();
+}
+
+function openSocket() {
+  if (ws) { try { ws.close(); } catch (e) {} }
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/v1/ws?token=${encodeURIComponent($("#token").value)}`);
-  ws.onopen = () => { $("#ws").textContent = "socket: on"; $("#ws").className = "pill ok"; last = ""; };
-  ws.onclose = () => { $("#ws").textContent = "socket: off"; $("#ws").className = "pill"; };
+  ws.onopen = () => { $("#ws").textContent = "socket: on"; $("#ws").className = "pill ok"; last = ""; reconnectDelay = 500; };
+  ws.onclose = () => {
+    $("#ws").textContent = wantConnected ? "socket: reconnecting…" : "socket: off";
+    $("#ws").className = "pill";
+    ws = null;
+    scheduleReconnect();
+  };
+  ws.onerror = () => { try { ws.close(); } catch (e) {} };
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
     if (m.type === "hello") setState(m.controller);
@@ -186,6 +239,20 @@ function onRumble(m) {
   clearInterval(rumbleLoop); rumbleLoop = 0;
   if (level > 0) { playRumble(); rumbleLoop = setInterval(playRumble, 100); }
 }
+
+// -- returning from the background: re-acquire the wake lock and reconnect -----
+// Mobile browsers release the screen wake lock and suspend/throttle background
+// tabs (and the Gamepad API stops reporting when the page is hidden), so true
+// background play is not possible on a phone browser. We instead recover fast:
+// when the page is visible again we re-take the wake lock and reopen the socket.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  if (wantConnected) {
+    acquireWakeLock();
+    if (!ws || ws.readyState > 1) { reconnectDelay = 500; openSocket(); }
+  }
+});
+window.addEventListener("pageshow", () => { if (wantConnected) acquireWakeLock(); });
 
 if ($("#token").value) connect();
 </script>
