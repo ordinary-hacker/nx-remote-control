@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nxremote"
+version = "0.1.0"
+description = "Turn a Raspberry Pi (or any Linux box with Bluetooth) into a Nintendo Switch Pro Controller that is driven by a remote HTTP/WebSocket API, with HD rumble feedback."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "websockets>=12",
+    "dbus-fast>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "httpx>=0.27"]
+
+[project.scripts]
+nxremote = "nxremote.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"nxremote.bt" = ["sdp/*.xml"]
+"nxremote.api" = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

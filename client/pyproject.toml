@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nxremote-client"
+version = "0.1.0"
+description = "Forward a locally-connected game controller over the internet to an nxremote host, with rumble feedback. Runs on Windows, macOS and Linux."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "websockets>=12",
+]
+
+[project.optional-dependencies]
+# Desktop gamepad reading + rumble. pysdl2-dll bundles the SDL2 binaries so no
+# system install is needed on Windows/macOS/Linux x86_64 & arm64.
+sdl = ["pysdl2>=0.9.16", "pysdl2-dll>=2.28; platform_machine in 'x86_64 AMD64 arm64 aarch64'"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "pysdl2>=0.9.16", "pysdl2-dll>=2.28"]
+
+[project.scripts]
+nxremote-client = "nxremote_client.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

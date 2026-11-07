@@ -1,0 +1,16 @@
+nxremote builds on public research and prior art. No source code is copied from
+the projects below except where stated.
+
+* NXBT (https://github.com/Brikwerk/nxbt), MIT License, Copyright (c) 2021 Brikwerk.
+  The SDP service record `src/nxremote/bt/sdp/switch-controller.xml` is taken
+  from NXBT. The overall approach (BlueZ profile + raw L2CAP sockets, the
+  subcommand handshake, reconnect heuristics) follows NXBT's findings;
+  the implementation here is independent.
+* dekuNukem/Nintendo_Switch_Reverse_Engineering
+  (https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering):
+  report formats, SPI map and the HD rumble encoding tables.
+* joycontrol (https://github.com/mart1nro/joycontrol) for earlier work on
+  emulating controllers over Bluetooth.
+
+"Nintendo", "Switch" and "Pro Controller" are trademarks of Nintendo. This
+project is not affiliated with or endorsed by Nintendo.

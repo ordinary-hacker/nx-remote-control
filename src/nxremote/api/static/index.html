@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>nxremote</title>
+<style>
+  :root { color-scheme: dark; --bg:#14161a; --panel:#1e2128; --fg:#e8eaed; --muted:#8b93a1; --acc:#e60012; --ok:#2ecc71; }
+  * { box-sizing: border-box; touch-action: none; user-select: none; -webkit-user-select: none; }
+  body { margin:0; font:15px system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+  header { display:flex; flex-wrap:wrap; gap:.6rem; align-items:center; padding:.6rem 1rem; background:var(--panel); }
+  header h1 { font-size:1.05rem; margin:0 .6rem 0 0; }
+  input, button { font:inherit; color:inherit; background:#2a2f39; border:1px solid #3a4150; border-radius:6px; padding:.35rem .6rem; }
+  input { touch-action: auto; user-select: text; -webkit-user-select: text; }
+  button { cursor:pointer; } button:active, button.on { background:var(--acc); border-color:var(--acc); }
+  .pill { padding:.15rem .6rem; border-radius:99px; background:#2a2f39; color:var(--muted); }
+  .pill.ok { background:var(--ok); color:#031; }
+  main { max-width:900px; margin:1rem auto; padding:0 1rem; display:grid; gap:1rem; }
+  .pad { display:grid; grid-template-columns:1fr 1fr 1fr; gap:1rem; align-items:center; background:var(--panel); padding:1rem; border-radius:12px; }
+  .col { display:grid; gap:.5rem; justify-items:center; }
+  .row { display:flex; gap:.5rem; justify-content:center; flex-wrap:wrap; }
+  .btn { min-width:3.2rem; min-height:3.2rem; border-radius:50%; font-weight:700; }
+  .sq { border-radius:8px; min-width:3.2rem; min-height:2.4rem; }
+  .dpad { display:grid; grid-template-columns:repeat(3, 3rem); grid-template-rows:repeat(3, 3rem); gap:.2rem; }
+  .dpad button { border-radius:8px; padding:0; }
+  .stick { width:150px; height:150px; border-radius:50%; background:#12141a; border:2px solid #3a4150; position:relative; }
+  .stick i { position:absolute; width:56px; height:56px; border-radius:50%; background:#596277; left:47px; top:47px; }
+  #rumble { height:14px; border-radius:7px; background:#12141a; overflow:hidden; }
+  #rumble b { display:block; height:100%; width:0; background:var(--acc); transition:width .05s; }
+  pre { background:var(--panel); padding:.8rem; border-radius:8px; overflow:auto; max-height:12rem; margin:0; color:var(--muted); }
+  .panel { background:var(--panel); padding:.8rem 1rem; border-radius:12px; display:grid; gap:.5rem; }
+  @media (max-width:640px) { .pad { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>nxremote</h1>
+  <input id="token" type="password" placeholder="API token" size="18">
+  <button id="connect">Connect</button>
+  <span class="pill" id="ws">socket: off</span>
+  <span class="pill" id="state">controller: ?</span>
+  <button id="start">Start pairing</button>
+  <button id="release">Release all</button>
+</header>
+<main>
+  <div class="pad">
+    <div class="col">
+      <div class="row"><button class="sq" data-b="ZL">ZL</button><button class="sq" data-b="L">L</button></div>
+      <div class="stick" id="ls"><i></i></div>
+      <div class="dpad">
+        <span></span><button data-b="DPAD_UP">&#9650;</button><span></span>
+        <button data-b="DPAD_LEFT">&#9664;</button><span></span><button data-b="DPAD_RIGHT">&#9654;</button>
+        <span></span><button data-b="DPAD_DOWN">&#9660;</button><span></span>
+      </div>
+    </div>
+    <div class="col">
+      <div class="row"><button class="sq" data-b="MINUS">&minus;</button><button class="sq" data-b="CAPTURE">&#9679;</button><button class="sq" data-b="HOME">&#8962;</button><button class="sq" data-b="PLUS">+</button></div>
+      <div class="row"><button class="sq" data-b="L_STICK">L3</button><button class="sq" data-b="R_STICK">R3</button></div>
+      <div>Rumble</div>
+      <div id="rumble" style="width:100%"><b></b></div>
+      <div class="pill" id="pad">no gamepad</div>
+    </div>
+    <div class="col">
+      <div class="row"><button class="sq" data-b="R">R</button><button class="sq" data-b="ZR">ZR</button></div>
+      <div class="row"><button class="btn" data-b="X">X</button></div>
+      <div class="row"><button class="btn" data-b="Y">Y</button><button class="btn" data-b="A">A</button></div>
+      <div class="row"><button class="btn" data-b="B">B</button></div>
+      <div class="stick" id="rs"><i></i></div>
+    </div>
+  </div>
+  <div class="panel">
+    <div>Physical gamepads connected to <em>this browser</em> are forwarded automatically (button positions follow the Switch layout) and receive the Switch's rumble.</div>
+    <label><input type="checkbox" id="fwd" checked> forward gamepad</label>
+  </div>
+  <pre id="log"></pre>
+</main>
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+const logEl = $("#log");
+const log = (m) => { logEl.textContent = (m + "\n" + logEl.textContent).slice(0, 4000); };
+$("#token").value = localStorage.getItem("nxremote-token") || new URLSearchParams(location.search).get("token") || "";
+
+let ws = null;
+const held = new Set();          // buttons held via the UI
+let pad = { buttons: new Set(), ls: [0, 0], rs: [0, 0] };  // from a physical gamepad
+const sticks = { ls: [0, 0], rs: [0, 0] };                 // from on-screen sticks
+let last = "";
+
+function api(path, opts = {}) {
+  return fetch(path, { ...opts, headers: { "Authorization": "Bearer " + $("#token").value, "Content-Type": "application/json" } })
+    .then(async (r) => { if (!r.ok) throw new Error(r.status + " " + await r.text()); return r.json(); });
+}
+
+function connect() {
+  if (ws) ws.close();
+  localStorage.setItem("nxremote-token", $("#token").value);
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${proto}://${location.host}/v1/ws?token=${encodeURIComponent($("#token").value)}`);
+  ws.onopen = () => { $("#ws").textContent = "socket: on"; $("#ws").className = "pill ok"; last = ""; };
+  ws.onclose = () => { $("#ws").textContent = "socket: off"; $("#ws").className = "pill"; };
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.type === "hello") setState(m.controller);
+    else if (m.type === "state") setState(m);
+    else if (m.type === "rumble") onRumble(m);
+    else if (m.type === "error") log("error: " + m.message);
+    else if (m.type !== "pong" && m.type !== "ack") log(JSON.stringify(m));
+  };
+}
+function setState(c) {
+  const el = $("#state");
+  el.textContent = "controller: " + c.state + (c.peer ? " (" + c.peer + ")" : "");
+  el.className = "pill" + (c.connected ? " ok" : "");
+}
+$("#connect").onclick = connect;
+$("#start").onclick = () => api("/v1/connection/start", { method: "POST", body: "{}" }).then((r) => log("start: " + JSON.stringify(r))).catch((e) => log(e.message));
+$("#release").onclick = () => { held.clear(); document.querySelectorAll("[data-b]").forEach((b) => b.classList.remove("on")); api("/v1/input/release-all", { method: "POST" }).catch((e) => log(e.message)); };
+
+// -- on-screen buttons
+document.querySelectorAll("[data-b]").forEach((b) => {
+  const name = b.dataset.b;
+  const down = (e) => { e.preventDefault(); b.setPointerCapture(e.pointerId); held.add(name); b.classList.add("on"); };
+  const up = () => { held.delete(name); b.classList.remove("on"); };
+  b.addEventListener("pointerdown", down);
+  b.addEventListener("pointerup", up);
+  b.addEventListener("pointercancel", up);
+});
+
+// -- on-screen sticks
+function bindStick(id, key) {
+  const el = $(id), knob = el.querySelector("i"), R = 75;
+  const move = (e) => {
+    const r = el.getBoundingClientRect();
+    let x = (e.clientX - (r.left + R)) / R, y = (e.clientY - (r.top + R)) / R;
+    const len = Math.hypot(x, y); if (len > 1) { x /= len; y /= len; }
+    sticks[key] = [x, -y];
+    knob.style.left = (47 + x * 47) + "px"; knob.style.top = (47 + y * 47) + "px";
+  };
+  const end = () => { sticks[key] = [0, 0]; knob.style.left = knob.style.top = "47px"; };
+  el.addEventListener("pointerdown", (e) => { el.setPointerCapture(e.pointerId); move(e); });
+  el.addEventListener("pointermove", (e) => { if (e.buttons) move(e); });
+  el.addEventListener("pointerup", end);
+  el.addEventListener("pointercancel", end);
+}
+bindStick("#ls", "ls"); bindStick("#rs", "rs");
+
+// -- physical gamepad (standard mapping -> Switch positions)
+const MAP = { 0: "B", 1: "A", 2: "Y", 3: "X", 4: "L", 5: "R", 6: "ZL", 7: "ZR", 8: "MINUS", 9: "PLUS",
+              10: "L_STICK", 11: "R_STICK", 12: "DPAD_UP", 13: "DPAD_DOWN", 14: "DPAD_LEFT", 15: "DPAD_RIGHT", 16: "HOME", 17: "CAPTURE" };
+const dz = (v) => (Math.abs(v) < 0.08 ? 0 : v);
+function activePad() { return [...(navigator.getGamepads?.() || [])].find((g) => g && g.connected); }
+
+function pump() {
+  const g = $("#fwd").checked ? activePad() : null;
+  pad = { buttons: new Set(), ls: [0, 0], rs: [0, 0] };
+  if (g) {
+    $("#pad").textContent = g.id.slice(0, 40);
+    g.buttons.forEach((b, i) => { if (b.pressed && MAP[i]) pad.buttons.add(MAP[i]); });
+    pad.ls = [dz(g.axes[0] || 0), -dz(g.axes[1] || 0)];
+    pad.rs = [dz(g.axes[2] || 0), -dz(g.axes[3] || 0)];
+  } else $("#pad").textContent = "no gamepad";
+  const pick = (a, b) => (Math.hypot(...a) >= Math.hypot(...b) ? a : b);
+  const ls = pick(sticks.ls, pad.ls), rs = pick(sticks.rs, pad.rs);
+  const msg = { type: "input", buttons: [...new Set([...held, ...pad.buttons])],
+                left_stick: { x: +ls[0].toFixed(3), y: +ls[1].toFixed(3) }, right_stick: { x: +rs[0].toFixed(3), y: +rs[1].toFixed(3) } };
+  const s = JSON.stringify(msg);
+  if (s !== last && ws && ws.readyState === 1) { ws.send(s); last = s; }
+  requestAnimationFrame(pump);
+}
+requestAnimationFrame(pump);
+
+// -- rumble feedback: keep driving the local gamepad while the Switch keeps rumbling
+let rumble = { l: 0, r: 0 }, rumbleLoop = 0;
+function playRumble() {
+  const g = activePad(), act = g && g.vibrationActuator;
+  if (act && $("#fwd").checked) {
+    act.playEffect("dual-rumble", { startDelay: 0, duration: 120, strongMagnitude: Math.min(1, rumble.l),
+      weakMagnitude: Math.min(1, rumble.r) }).catch(() => {});
+  } else if (navigator.vibrate) navigator.vibrate(120);
+}
+function onRumble(m) {
+  rumble = { l: m.left.intensity, r: m.right.intensity };
+  const level = Math.max(rumble.l, rumble.r);
+  $("#rumble b").style.width = Math.min(100, level * 100) + "%";
+  clearInterval(rumbleLoop); rumbleLoop = 0;
+  if (level > 0) { playRumble(); rumbleLoop = setInterval(playRumble, 100); }
+}
+
+if ($("#token").value) connect();
+</script>
+</body>
+</html>

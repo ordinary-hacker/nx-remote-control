@@ -1,0 +1,22 @@
+[Unit]
+Description=nxremote - Nintendo Switch Pro Controller emulator with remote API
+Documentation=https://github.com/ (see README.md)
+After=bluetooth.service network-online.target
+Wants=bluetooth.service network-online.target
+
+[Service]
+Type=simple
+# Needs to bind L2CAP PSM 17/19 and configure the adapter, so it runs as root.
+ExecStart=/opt/nxremote/venv/bin/nxremote serve --host 0.0.0.0 --port 8000
+Environment=NXREMOTE_STATE_DIR=/var/lib/nxremote
+StateDirectory=nxremote
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectHome=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
