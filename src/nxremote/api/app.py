@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 from .. import __version__
 from ..core import ControllerService
+from ..hid import wire
 from ..hid.state import NEUTRAL, ControllerState, normalize_buttons
 from ..hub import InputHub
 from ..macros import MacroRunner, Step, tap_steps
@@ -99,6 +100,17 @@ class Runtime:
         """Full replacement: everything not mentioned goes back to neutral."""
         self.hub.set_direct(NEUTRAL.with_(battery=self.hub.direct().battery))
         return self.apply_patch(patch)
+
+    def apply_binary(self, data: bytes) -> None:
+        """Apply a compact binary input frame (buttons + sticks); keeps imu/battery."""
+        decoded = wire.decode(data)
+        self.hub.modify(
+            lambda s: s.with_(
+                buttons=decoded.buttons,
+                left_stick=decoded.left_stick,
+                right_stick=decoded.right_stick,
+            )
+        )
 
     def require_connected(self) -> None:
         if not self.service.status()["connected"]:
@@ -298,6 +310,9 @@ def create_app(service: ControllerService, hub: InputHub, token: Optional[str] =
             await ws.close(code=1008)
             return
         await ws.accept()
+        # Note: asyncio already sets TCP_NODELAY on every TCP transport, and the
+        # server disables permessage-deflate for this realtime channel (see cli.py),
+        # so tiny input frames are sent immediately and uncompressed.
         wanted = {e.strip() for e in events.split(",")} if events else None
         q = rt.broker.subscribe()
         sent_input = False
@@ -312,7 +327,25 @@ def create_app(service: ControllerService, hub: InputHub, token: Optional[str] =
         pump_task = asyncio.create_task(pump())
         try:
             while True:
-                raw = await ws.receive_text()
+                message = await ws.receive()
+                if message.get("type") == "websocket.disconnect":
+                    break
+                # Fast path: a compact binary input frame (buttons + sticks).
+                if message.get("bytes") is not None:
+                    data = message["bytes"]
+                    try:
+                        if wire.is_binary_input(data):
+                            rt.apply_binary(data)
+                            sent_input = True
+                        else:
+                            await ws.send_json({"type": "error", "message": "unknown binary frame"})
+                    except (ValueError, HTTPException) as e:
+                        detail = e.detail if isinstance(e, HTTPException) else str(e)
+                        await ws.send_json({"type": "error", "message": detail})
+                    continue
+                raw = message.get("text")
+                if raw is None:
+                    continue
                 msg_id = None
                 try:
                     msg = json.loads(raw)

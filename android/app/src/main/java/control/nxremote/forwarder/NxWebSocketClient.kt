@@ -11,6 +11,23 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.net.InetAddress
+import java.net.Socket
+import javax.net.SocketFactory
+
+/** A SocketFactory that disables Nagle's algorithm on every socket it creates. */
+object NoDelaySocketFactory : SocketFactory() {
+    private fun tune(s: Socket): Socket = s.apply {
+        try { tcpNoDelay = true } catch (_: Exception) {}
+    }
+    override fun createSocket(): Socket = tune(Socket())
+    override fun createSocket(host: String?, port: Int): Socket = tune(Socket(host, port))
+    override fun createSocket(host: String?, port: Int, localHost: InetAddress?, localPort: Int): Socket =
+        tune(Socket(host, port, localHost, localPort))
+    override fun createSocket(host: InetAddress?, port: Int): Socket = tune(Socket(host, port))
+    override fun createSocket(address: InetAddress?, port: Int, localAddress: InetAddress?, localPort: Int): Socket =
+        tune(Socket(address, port, localAddress, localPort))
+}
 
 /** Normalises a host string and builds the nxremote WebSocket URL. */
 object HostUrl {
@@ -50,12 +67,16 @@ class NxWebSocketClient(
     private val onRumble: (RumbleState) -> Unit = {},
     private val onStatus: (String, Boolean) -> Unit = { _, _ -> },
     private val onError: (String) -> Unit = {},
+    private val binary: Boolean = true,
 ) {
     private val client = OkHttpClient.Builder()
         .pingInterval(20, TimeUnit.SECONDS)
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)   // streaming; no read timeout
         .retryOnConnectionFailure(true)
+        // Disable Nagle's algorithm: input frames are tiny and latency-critical,
+        // and without TCP_NODELAY the kernel can delay a small packet ~40 ms.
+        .socketFactory(NoDelaySocketFactory)
         .build()
 
     @Volatile private var ws: WebSocket? = null
@@ -80,9 +101,19 @@ class NxWebSocketClient(
         scheduler.shutdownNow()
     }
 
-    /** Send the current controller state (dropped silently if not connected). */
+    /**
+     * Send the current controller state. Uses the compact 12-byte binary frame by
+     * default (smaller, parse-free on the host); set [binary] = false for JSON.
+     * Both are accepted by the host, so this is safe against older servers only if
+     * they understand binary — the host here does.
+     */
     fun sendState(state: ControllerState) {
-        ws?.send(state.normalized().toInputJson())
+        val w = ws ?: return
+        if (binary) {
+            w.send(okio.ByteString.of(*state.toBinaryFrame()))
+        } else {
+            w.send(state.normalized().toInputJson())
+        }
     }
 
     fun sendRaw(message: String) {

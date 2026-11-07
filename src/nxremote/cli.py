@@ -90,7 +90,17 @@ def cmd_serve(args, state_dir: Path) -> int:
             logging.info("API token stored in %s (show it with `nxremote token`)", state_dir / "token")
 
     app = create_app(service, hub, token=token, autostart=not args.no_autostart)
-    uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level.lower(), ws_ping_interval=20)
+    # Realtime input is many tiny frames: disable permessage-deflate (compressing
+    # ~100-byte packets only adds CPU and latency) and keep Nagle off (see the WS
+    # endpoint, which sets TCP_NODELAY on each accepted socket).
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        log_level=args.log_level.lower(),
+        ws_ping_interval=20,
+        ws_per_message_deflate=False,
+    )
     return 0
 
 

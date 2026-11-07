@@ -25,6 +25,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Keeps forwarding the controller while the app is backgrounded or the screen is
@@ -101,23 +102,32 @@ class ForwarderService : Service() {
     }
 
     private suspend fun sendLoop() {
-        val period = 1000L / SEND_HZ
+        val minGapMs = 1000L / SEND_HZ   // cap the burst rate (~8 ms at 120 Hz)
         var lastSent: ControllerState? = null
         var lastSentAt = 0L
+        var seenRev = -1L
         while (currentCoroutineContext().isActive) {
+            val c = client
+            // Block until the input changes or the keep-alive interval elapses,
+            // so a press is forwarded within ~1 ms instead of up to a poll period.
+            val waited = withContext(Dispatchers.IO) {
+                ControllerHolder.awaitChange(seenRev, KEEPALIVE_MS)
+            }
+            seenRev = waited
             val state = ControllerHolder.snapshot()
             val now = System.currentTimeMillis()
-            val c = client
             if (c != null && c.connected) {
-                if (state != lastSent || now - lastSentAt >= KEEPALIVE_MS) {
+                val changed = state != lastSent
+                if (changed || now - lastSentAt >= KEEPALIVE_MS) {
                     c.sendState(state)
                     lastSent = state
                     lastSentAt = now
+                    // Rate-limit only consecutive *changes* so we never flood the link.
+                    if (changed) delay(minGapMs)
                 }
             } else {
                 lastSent = null
             }
-            delay(period)
         }
     }
 

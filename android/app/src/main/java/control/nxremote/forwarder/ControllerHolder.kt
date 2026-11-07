@@ -18,6 +18,12 @@ object ControllerHolder {
     val rumble = AtomicReference(RumbleState())
     @Volatile var lastDeviceName: String = "none"
 
+    // Monotonic counter bumped whenever the merged state actually changes, with a
+    // lock to let the send loop block until the next change (instead of polling on
+    // a fixed timer, which adds up to a full poll period of input latency).
+    private val revLock = Object()
+    @Volatile private var revision = 0L
+
     @Synchronized
     fun setButton(name: String, pressed: Boolean) {
         if (pressed) heldButtons.add(name) else heldButtons.remove(name)
@@ -41,9 +47,35 @@ object ControllerHolder {
         val a = axes
         val buttons = HashSet(heldButtons)
         buttons.addAll(a.buttons)   // trigger + hat contributions
-        merged.set(ControllerState(buttons, a.lx, a.ly, a.rx, a.ry))
+        val next = ControllerState(buttons, a.lx, a.ly, a.rx, a.ry)
+        if (next != merged.get()) {
+            merged.set(next)
+            synchronized(revLock) {
+                revision++
+                revLock.notifyAll()
+            }
+        }
     }
 
     /** The current combined controller state for the send loop. */
     fun snapshot(): ControllerState = merged.get()
+
+    fun revision(): Long = revision
+
+    /**
+     * Block until the merged state changes past [since], or until [timeoutMs]
+     * elapses. Returns the current revision. Lets the send loop fire the instant
+     * an input arrives while still bounding the idle keep-alive rate.
+     */
+    fun awaitChange(since: Long, timeoutMs: Long): Long {
+        synchronized(revLock) {
+            if (revision == since && timeoutMs > 0) {
+                try {
+                    revLock.wait(timeoutMs)
+                } catch (_: InterruptedException) {
+                }
+            }
+            return revision
+        }
+    }
 }

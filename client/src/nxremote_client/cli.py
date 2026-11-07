@@ -38,7 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--deadzone", type=float, default=0.08, help="stick deadzone 0..1 (default 0.08)")
     p.add_argument("--trigger-threshold", type=float, default=0.4, help="analog trigger press point for ZL/ZR (default 0.4)")
 
-    p.add_argument("--rate", type=float, default=120.0, help="poll/send rate in Hz (default 120)")
+    p.add_argument("--rate", type=float, default=250.0, help="gamepad poll rate in Hz (default 250; sent on change)")
     p.add_argument("--no-reconnect", action="store_true", help="exit instead of retrying when the connection drops")
     p.add_argument("--keep-on-exit", action="store_true",
                    help="leave inputs held on the host if the client exits (default: host releases them)")

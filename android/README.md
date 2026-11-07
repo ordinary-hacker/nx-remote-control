@@ -81,6 +81,14 @@ the internet put the host behind TLS and give a `wss://` URL.
 | `ForwarderService.kt` | foreground service (`dataSync`), 120 Hz send loop, rumble playback, wake lock, notification |
 | `MainActivity.kt` | host/token UI, captures controller events, starts/stops the service, shows status |
 
+## Latency
+
+Tuned for input lag: Nagle is disabled on the socket (a `SocketFactory` that sets
+`TCP_NODELAY`), the send loop blocks until the input actually changes and fires
+within ~1 ms (rather than waiting out a fixed tick), and input is sent as the
+host's **12-byte binary frame** (vs ~98 bytes of JSON, and no parse on the host).
+Keep the phone and host on the same LAN / a low-latency link for the best feel.
+
 ## Verified / not verified
 
 **Verified** on an Android 14 (API 34) x86_64 emulator: the app installs, launches,

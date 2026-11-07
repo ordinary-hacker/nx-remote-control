@@ -170,3 +170,27 @@ def test_rumble_endpoint_and_stop_start(env):
     assert client.post("/v1/tap", headers=AUTH, json={"buttons": ["a"]}).status_code == 409
     assert client.post("/v1/connection/start", headers=AUTH, json={}).status_code == 202
     wait_for(lambda: svc.state == "connected", what="restart")
+
+
+def test_websocket_binary_input_frame(env):
+    client, svc, hub, conn = env
+    from nxremote.hid import wire
+    from nxremote.hid.state import ControllerState, Stick
+
+    sw = conn.switch
+    with client.websocket_connect(f"/v1/ws?token={TOKEN}") as ws:
+        ws.receive_json()  # hello
+        frame = wire.encode(
+            ControllerState(buttons=frozenset({"A", "ZR", "DPAD_UP"}), left_stick=Stick(1.0, -1.0))
+        )
+        ws.send_bytes(frame)
+        wait_for(lambda: sw.state.buttons == {"A", "ZR", "DPAD_UP"}, what="binary buttons on console")
+        wait_for(lambda: sw.state.left_stick.x > 0.9 and sw.state.left_stick.y < -0.9, what="binary stick")
+        # A bad binary frame is reported, not fatal.
+        ws.send_bytes(b"\x00" * 12)
+        err = ws.receive_json()
+        assert err["type"] == "error"
+        # JSON still works on the same socket after binary.
+        ws.send_json({"type": "input", "id": 9, "buttons": []})
+        assert ws.receive_json() == {"type": "ack", "id": 9}
+        wait_for(lambda: not sw.state.buttons, what="json release after binary")

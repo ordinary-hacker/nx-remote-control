@@ -29,7 +29,7 @@ class ForwarderClient:
         transport: Transport,
         sink: Optional[RumbleSink] = None,
         *,
-        rate: float = 120.0,
+        rate: float = 250.0,
         keepalive: float = 1.0,
     ) -> None:
         self.source = source

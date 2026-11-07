@@ -122,6 +122,17 @@ Client → server (JSON, add `"id"` to receive `ack`/`error`):
 
 Server → client: `hello` (full status), `state`, `rumble`, `player_lights`, `home_light`, `mode`, `imu_enabled`, `vibration_enabled`, `pong`, `ack`, `error`.
 
+### Low latency
+
+The realtime channel is tuned for input lag, not throughput:
+
+* **Nagle's algorithm is off** end to end (`TCP_NODELAY`): the host (asyncio sets it on every transport), the Python client (set by `websockets`) and the Android client (a no-delay socket factory). This is the biggest win — Nagle can otherwise hold a small input packet up to ~40 ms.
+* **WebSocket per-message compression is disabled** (`ws_per_message_deflate=False`): deflating ~100-byte input frames only adds CPU and latency.
+* Clients **send on change**, not on a fixed tick, so a press leaves the device within ~1 ms rather than waiting out a poll period.
+* **Optional compact binary input frame.** Instead of a ~98-byte JSON `input` message, a client may send a 12-byte WebSocket *binary* frame: `0xB1`, a 3-byte button bitmask (in the button order above), then four little-endian `int16` axes (`lx, ly, rx, ry`, −32767..32767 = −1.0..1.0, +x right / +y up). It carries buttons + sticks (the common case); IMU/taps/macros stay JSON. JSON remains the default and is always accepted; the Android app uses the binary frame automatically. ~8× smaller and no parse on the host.
+
+Remaining latency is real network conditions plus the console's own ~66 Hz polling; keep the host on the same LAN or a low-latency link for the best feel.
+
 ### Rumble event
 
 Sent when the console changes the rumble command of either actuator (and a neutral one on disconnect):
